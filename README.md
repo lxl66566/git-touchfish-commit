@@ -11,4 +11,6 @@
 ```bash
 git tc set 09:00 17:00  # 设置时间区间，时间格式为 `HH:MM`，只需首次运行时设置
 git tc -a -m "comment"  # 提交，commit 时间将自动设置为随机时间
+git tc show             # 查看当前的时间区间
+git tc amend            # 使用随机时间修改最后一次提交
 ```
