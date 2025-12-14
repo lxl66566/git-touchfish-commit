@@ -168,56 +168,80 @@ fn get_last_commit_time() -> Result<DateTime<Local>> {
     Ok(Local.timestamp_opt(timestamp, 0).unwrap())
 }
 
-/// 生成随机时间，保证晚于最后一次 commit
+/// 生成随机时间
+/// 逻辑：优先在 (Last Commit, Config End] 区间内生成，如果区间无效则顺延到明天
 fn generate_random_commit_time() -> Result<DateTime<Local>> {
     let cfg: AppConfig = confy::load("git-touchfish-commit", None)?;
 
-    let start_time = NaiveTime::parse_from_str(&cfg.start_time, "%H:%M")?;
-    let end_time = NaiveTime::parse_from_str(&cfg.end_time, "%H:%M")?;
+    let start_time_naive = NaiveTime::parse_from_str(&cfg.start_time, "%H:%M")?;
+    let end_time_naive = NaiveTime::parse_from_str(&cfg.end_time, "%H:%M")?;
 
-    // 1. 获取最后一次 commit 的时间
+    // 1. 获取参照时间
     let last_commit_time = get_last_commit_time()?;
-
-    // 2. 基础日期默认为“今天”
     let now = Local::now();
-    let mut base_date = now.date_naive();
 
-    // 如果最后一次提交的时间比今天还晚（比如之前已经做过未来的提交），
-    // 那么基础日期至少要从那一天开始，否则生成的“今天”肯定会早于“最后提交”
-    if last_commit_time.date_naive() > base_date {
-        base_date = last_commit_time.date_naive();
+    // 确定计算的基础日期：
+    // 如果最后一次提交是在未来（相对于系统时间），则从那一天开始算，否则从今天开始算
+    let mut target_date = if last_commit_time.date_naive() > now.date_naive() {
+        last_commit_time.date_naive()
+    } else {
+        now.date_naive()
+    };
+
+    // 2. 构建当天的目标时间窗口
+    let config_start_dt = target_date
+        .and_time(start_time_naive)
+        .and_local_timezone(Local)
+        .unwrap();
+    let mut config_end_dt = target_date
+        .and_time(end_time_naive)
+        .and_local_timezone(Local)
+        .unwrap();
+
+    // 3. 动态调整开始时间：取 max(配置开始时间, 最后提交时间 + 1秒)
+    // 这样保证新提交一定在旧提交之后
+    let min_start_dt = last_commit_time + Duration::seconds(1);
+
+    let mut final_start_dt = if min_start_dt > config_start_dt {
+        min_start_dt
+    } else {
+        config_start_dt
+    };
+
+    // 4. 检查区间有效性
+    // 如果调整后的开始时间 已经晚于 结束时间，说明今天没空了，顺延到明天
+    if final_start_dt >= config_end_dt {
+        println!(
+            "今日可用时间窗口已耗尽（最后提交于 {}，晚于结束时间 {}），顺延至明天...",
+            last_commit_time.format("%H:%M:%S"),
+            cfg.end_time
+        );
+
+        target_date += Duration::days(1);
+
+        // 明天就是全新的开始，直接用配置的时间即可
+        final_start_dt = target_date
+            .and_time(start_time_naive)
+            .and_local_timezone(Local)
+            .unwrap();
+        config_end_dt = target_date
+            .and_time(end_time_naive)
+            .and_local_timezone(Local)
+            .unwrap();
     }
 
-    // 3. 在基础日期上构建随机时间
-    let start_datetime = base_date.and_time(start_time);
-    let end_datetime = base_date.and_time(end_time);
+    // 5. 计算区间差值并随机
+    let total_seconds = (config_end_dt - final_start_dt).num_seconds();
 
-    let total_seconds = (end_datetime - start_datetime).num_seconds();
-    if total_seconds <= 0 {
-        return Err("时间范围无效，结束时间必须晚于开始时间".into());
+    // 防御性编程：理论上这里 total_seconds 应该 >= 0，但如果配置本身 start > end 会导致负数
+    if total_seconds < 0 {
+        return Err("配置错误：结束时间必须晚于开始时间".into());
     }
 
     let mut rng = rand::rng();
-    let random_offset_seconds = rng.random_range(0..=total_seconds);
+    let random_offset = rng.random_range(0..=total_seconds);
 
-    // 初始生成的随机时间
-    let mut random_datetime_naive = start_datetime + Duration::seconds(random_offset_seconds);
-    let mut final_datetime = Local.from_local_datetime(&random_datetime_naive).unwrap();
+    let random_dt = final_start_dt + Duration::seconds(random_offset);
 
-    // 4. 核心逻辑：如果生成的随机时间 <= 最后一次提交时间，则顺延一天
-    // 这种情况通常发生在：
-    // a. 今天已经提交过了，且最后一次提交时间晚于刚才随机出的时间。
-    // b. 设定的时间区间（如 09:00-10:00）整体早于最后一次提交时间（如 11:00）。
-    if final_datetime <= last_commit_time {
-        println!(
-            "生成的随机时间 ({}) 早于最后一次提交 ({})，自动顺延一天...",
-            final_datetime.format("%Y-%m-%d %H:%M:%S"),
-            last_commit_time.format("%Y-%m-%d %H:%M:%S")
-        );
-
-        random_datetime_naive += Duration::days(1);
-        final_datetime = Local.from_local_datetime(&random_datetime_naive).unwrap();
-    }
-
-    Ok(final_datetime)
+    Ok(random_dt)
 }
