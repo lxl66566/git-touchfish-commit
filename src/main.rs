@@ -3,6 +3,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
 // --- 配置结构体 ---
 #[derive(Debug, Serialize, Deserialize)]
 struct AppConfig {
@@ -20,8 +22,7 @@ impl Default for AppConfig {
 }
 
 // --- 主函数：命令行入口 ---
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 跳过程序名称，获取用户传入的参数
+fn main() -> Result<()> {
     let cli: Vec<String> = std::env::args().skip(1).collect();
 
     if cli.is_empty() {
@@ -36,7 +37,6 @@ git-tc ...
         return Ok(());
     }
 
-    // 使用 match 语句处理不同的子命令
     match cli[0].as_str() {
         "set" => {
             if cli.len() != 3 {
@@ -49,10 +49,8 @@ git-tc ...
             show_time_range()?;
         }
         "amend" => {
-            // 将 "amend" 命令本身之后的所有参数传递给执行函数
             amend_commit_time(&cli[1..])?;
         }
-        // 默认行为是创建一个新的 commit
         _ => {
             run_commit(&cli)?;
         }
@@ -63,9 +61,7 @@ git-tc ...
 
 // --- 核心功能函数 ---
 
-/// 设置并存储随机时间的起止范围
-fn set_time_range(start: &str, end: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // 解析时间字符串，如果格式不正确则返回错误
+fn set_time_range(start: &str, end: &str) -> Result<()> {
     let start_time = NaiveTime::parse_from_str(start, "%H:%M").map_err(|_| {
         format!(
             "无效的开始时间格式: {}. 请使用 HH:MM 格式 (例如 09:00)",
@@ -88,22 +84,18 @@ fn set_time_range(start: &str, end: &str) -> Result<(), Box<dyn std::error::Erro
         end_time: end.to_string(),
     };
 
-    // 使用 confy 库将配置写入文件
     confy::store("git-touchfish-commit", None, cfg)?;
     println!("时间区间已设置为: {} - {}", start, end);
     Ok(())
 }
 
-/// 显示当前存储的时间范围
-fn show_time_range() -> Result<(), Box<dyn std::error::Error>> {
+fn show_time_range() -> Result<()> {
     let cfg: AppConfig = confy::load("git-touchfish-commit", None)?;
     println!("当前时间区间: {} - {}", cfg.start_time, cfg.end_time);
     Ok(())
 }
 
-/// 使用随机时间执行一次新的 git commit
-fn run_commit(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    // 生成一个随机时间
+fn run_commit(args: &[String]) -> Result<()> {
     let random_datetime = generate_random_commit_time()?;
     let formatted_time = random_datetime.to_rfc3339();
 
@@ -112,11 +104,10 @@ fn run_commit(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut commit_command = Command::new("git");
     commit_command
         .arg("commit")
-        .args(args) // 传递用户的所有参数，例如 -m "message"
+        .args(args)
         .env("GIT_AUTHOR_DATE", &formatted_time)
         .env("GIT_COMMITTER_DATE", &formatted_time);
 
-    // 在子进程中执行命令
     let status = commit_command.status()?;
 
     if !status.success() {
@@ -127,9 +118,7 @@ fn run_commit(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// 使用随机时间修改最后一次 commit
-fn amend_commit_time(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    // 生成一个随机时间
+fn amend_commit_time(args: &[String]) -> Result<()> {
     let random_datetime = generate_random_commit_time()?;
     let formatted_time = random_datetime.to_rfc3339();
 
@@ -145,7 +134,6 @@ fn amend_commit_time(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         .env("GIT_AUTHOR_DATE", &formatted_time)
         .env("GIT_COMMITTER_DATE", &formatted_time);
 
-    // 在子进程中执行命令
     let status = commit_command.status()?;
 
     if !status.success() {
@@ -156,41 +144,80 @@ fn amend_commit_time(args: &[String]) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
-/// 根据存储的配置生成一个随机的 commit 时间
-/// 这是被 `run_commit` 和 `amend_commit_time` 复用的核心逻辑
-fn generate_random_commit_time() -> Result<DateTime<Local>, Box<dyn std::error::Error>> {
-    // 加载配置，如果失败则返回默认值
+/// 获取当前仓库最后一次 commit 的时间
+fn get_last_commit_time() -> Result<DateTime<Local>> {
+    // 使用 git log -1 --format=%ct 获取最后一次提交的 Unix 时间戳
+    let output = Command::new("git")
+        .args(["log", "-1", "--format=%ct"])
+        .output();
+
+    // 如果执行失败（例如不在 git 仓库中，或者没有 commit），默认返回一个很久以前的时间
+    // 这样逻辑就会回退到使用 "今天"
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return Ok(Local.timestamp_opt(0, 0).unwrap()), // 1970-01-01
+    };
+
+    let timestamp_str = String::from_utf8(output.stdout)?.trim().to_string();
+    if timestamp_str.is_empty() {
+        return Ok(Local.timestamp_opt(0, 0).unwrap());
+    }
+
+    let timestamp: i64 = timestamp_str.parse()?;
+    // 将时间戳转换为本地时间
+    Ok(Local.timestamp_opt(timestamp, 0).unwrap())
+}
+
+/// 生成随机时间，保证晚于最后一次 commit
+fn generate_random_commit_time() -> Result<DateTime<Local>> {
     let cfg: AppConfig = confy::load("git-touchfish-commit", None)?;
 
-    // 解析配置中的时间
     let start_time = NaiveTime::parse_from_str(&cfg.start_time, "%H:%M")?;
     let end_time = NaiveTime::parse_from_str(&cfg.end_time, "%H:%M")?;
 
+    // 1. 获取最后一次 commit 的时间
+    let last_commit_time = get_last_commit_time()?;
+
+    // 2. 基础日期默认为“今天”
     let now = Local::now();
-    let today_date = now.date_naive();
+    let mut base_date = now.date_naive();
 
-    // 创建今天的起始和结束 datetime 对象
-    let start_datetime = today_date.and_time(start_time);
-    let end_datetime = today_date.and_time(end_time);
+    // 如果最后一次提交的时间比今天还晚（比如之前已经做过未来的提交），
+    // 那么基础日期至少要从那一天开始，否则生成的“今天”肯定会早于“最后提交”
+    if last_commit_time.date_naive() > base_date {
+        base_date = last_commit_time.date_naive();
+    }
 
-    // 计算总秒数差
+    // 3. 在基础日期上构建随机时间
+    let start_datetime = base_date.and_time(start_time);
+    let end_datetime = base_date.and_time(end_time);
+
     let total_seconds = (end_datetime - start_datetime).num_seconds();
     if total_seconds <= 0 {
         return Err("时间范围无效，结束时间必须晚于开始时间".into());
     }
 
-    // 生成一个随机秒数
     let mut rng = rand::rng();
     let random_offset_seconds = rng.random_range(0..=total_seconds);
 
-    // 计算最终的随机时间
+    // 初始生成的随机时间
     let mut random_datetime_naive = start_datetime + Duration::seconds(random_offset_seconds);
+    let mut final_datetime = Local.from_local_datetime(&random_datetime_naive).unwrap();
 
-    // 如果随机生成的时间点在当前时间之前，则将日期推到明天，确保 commit 时间在未来
-    if random_datetime_naive < now.naive_local() {
+    // 4. 核心逻辑：如果生成的随机时间 <= 最后一次提交时间，则顺延一天
+    // 这种情况通常发生在：
+    // a. 今天已经提交过了，且最后一次提交时间晚于刚才随机出的时间。
+    // b. 设定的时间区间（如 09:00-10:00）整体早于最后一次提交时间（如 11:00）。
+    if final_datetime <= last_commit_time {
+        println!(
+            "生成的随机时间 ({}) 早于最后一次提交 ({})，自动顺延一天...",
+            final_datetime.format("%Y-%m-%d %H:%M:%S"),
+            last_commit_time.format("%Y-%m-%d %H:%M:%S")
+        );
+
         random_datetime_naive += Duration::days(1);
+        final_datetime = Local.from_local_datetime(&random_datetime_naive).unwrap();
     }
 
-    // 将 naive 时间转换为带时区的 Local time
-    Ok(Local.from_local_datetime(&random_datetime_naive).unwrap())
+    Ok(final_datetime)
 }

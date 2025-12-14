@@ -1,11 +1,11 @@
 [package]
 edition = "2024"
 name    = "git-touchfish-commit"
-version = "0.2.0"
+version = "0.2.1"
 
 [dependencies]
 chrono = "0.4"
-confy  = "1"
+confy  = "2"
 rand   = "0.9"
 serde  = { version = "1", features = ["derive"] }
 
