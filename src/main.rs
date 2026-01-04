@@ -1,7 +1,8 @@
+use std::process::Command;
+
 use chrono::{DateTime, Duration, Local, NaiveTime, TimeZone};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -144,15 +145,14 @@ fn amend_commit_time(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// 获取当前仓库最后一次 commit 的时间
-fn get_last_commit_time() -> Result<DateTime<Local>> {
-    // 使用 git log -1 --format=%ct 获取最后一次提交的 Unix 时间戳
+/// 获取当前 HEAD commit 的时间
+fn get_head_commit_time() -> Result<DateTime<Local>> {
     let output = Command::new("git")
-        .args(["log", "-1", "--format=%ct"])
+        .args(["show", "-s", "--format=%ct", "HEAD"])
         .output();
 
-    // 如果执行失败（例如不在 git 仓库中，或者没有 commit），默认返回一个很久以前的时间
-    // 这样逻辑就会回退到使用 "今天"
+    // 如果执行失败（例如不在 git 仓库中，或者没有
+    // commit），默认返回一个很久以前的时间
     let output = match output {
         Ok(o) if o.status.success() => o,
         _ => return Ok(Local.timestamp_opt(0, 0).unwrap()), // 1970-01-01
@@ -164,8 +164,9 @@ fn get_last_commit_time() -> Result<DateTime<Local>> {
     }
 
     let timestamp: i64 = timestamp_str.parse()?;
+
     // 将时间戳转换为本地时间
-    Ok(Local.timestamp_opt(timestamp, 0).unwrap())
+    Ok(Local.timestamp_opt(timestamp, 0).single().unwrap())
 }
 
 /// 生成随机时间
@@ -177,11 +178,12 @@ fn generate_random_commit_time() -> Result<DateTime<Local>> {
     let end_time_naive = NaiveTime::parse_from_str(&cfg.end_time, "%H:%M")?;
 
     // 1. 获取参照时间
-    let last_commit_time = get_last_commit_time()?;
+    let last_commit_time = get_head_commit_time()?;
     let now = Local::now();
 
     // 确定计算的基础日期：
-    // 如果最后一次提交是在未来（相对于系统时间），则从那一天开始算，否则从今天开始算
+    // 如果最后一次提交是在未来（相对于系统时间），则从那一天开始算，
+    // 否则从今天开始算
     let mut target_date = if last_commit_time.date_naive() > now.date_naive() {
         last_commit_time.date_naive()
     } else {
@@ -233,7 +235,8 @@ fn generate_random_commit_time() -> Result<DateTime<Local>> {
     // 5. 计算区间差值并随机
     let total_seconds = (config_end_dt - final_start_dt).num_seconds();
 
-    // 防御性编程：理论上这里 total_seconds 应该 >= 0，但如果配置本身 start > end 会导致负数
+    // 防御性编程：理论上这里 total_seconds 应该 >= 0，但如果配置本身 start > end
+    // 会导致负数
     if total_seconds < 0 {
         return Err("配置错误：结束时间必须晚于开始时间".into());
     }

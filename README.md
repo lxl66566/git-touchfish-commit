@@ -1,10 +1,6 @@
 # git-touchfish-commit
 
-一个 CLI 工具，用于在 `git commit` 后将 commit 时间修改为指定时间区间内的随机时间点，且保证晚于最后一次 commit 时间。
-
-## 安装
-
-工具主要面向程序员群体，因此不再赘述安装方式。
+一个 CLI 工具，用于在 `git commit` 后将 commit 时间修改为指定时间区间内的随机时间点，且保证晚于当前 HEAD 的 commit 时间。
 
 ## 使用方法
 
