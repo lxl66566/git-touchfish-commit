@@ -17,13 +17,14 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             start_time: "00:00".to_string(),
-            end_time: "02:00".to_string(),
+            end_time: "04:00".to_string(),
         }
     }
 }
 
 // --- 主函数：命令行入口 ---
 fn main() -> Result<()> {
+    println!("{} v{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
     let cli: Vec<String> = std::env::args().skip(1).collect();
 
     if cli.is_empty() {
@@ -179,6 +180,7 @@ fn generate_random_commit_time() -> Result<DateTime<Local>> {
 
     // 1. 获取参照时间
     let last_commit_time = get_head_commit_time()?;
+    println!("last_commit_time: {:?}", last_commit_time);
     let now = Local::now();
 
     // 确定计算的基础日期：
@@ -231,6 +233,8 @@ fn generate_random_commit_time() -> Result<DateTime<Local>> {
             .and_local_timezone(Local)
             .unwrap();
     }
+
+    println!("最终使用的随机区间：{}-{}", final_start_dt, config_end_dt);
 
     // 5. 计算区间差值并随机
     let total_seconds = (config_end_dt - final_start_dt).num_seconds();
