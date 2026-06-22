@@ -1,14 +1,14 @@
 [package]
 edition = "2024"
 name    = "git-touchfish-commit"
-version = "0.2.2"
+version = "0.3.0"
 
 [dependencies]
 chrono = "0.4"
-confy  = "2"
-rand   = "0.9"
-serde  = { version = "1", features = ["derive"] }
+rand   = "0.10"
 
+[dev-dependencies]
+tempfile = "3"
 
 [[bin]]
 name = "git-tc"
