@@ -198,3 +198,31 @@ fn amend_changes_both_dates_and_preserves_author_identity() {
         "amend 后时间 {h:02}:{m:02} 仍须落在 09:00-17:00 内"
     );
 }
+
+#[test]
+fn amend_date_is_strictly_after_parent() {
+    let dir = fresh_repo();
+    tc(&dir, &["set", "--local", "09:00", "17:00"]);
+
+    // 第一次提交（作为 amend 时的父提交 HEAD^）
+    fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+    git(&dir, &["add", "a.txt"]);
+    tc(&dir, &["-m", "commit 1"]);
+    let parent = git(&dir, &["show", "-s", "--format=%aI", "HEAD"])
+        .trim()
+        .to_string();
+
+    // 第二次提交，随后 amend 它
+    fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+    git(&dir, &["add", "b.txt"]);
+    tc(&dir, &["-m", "commit 2"]);
+    tc(&dir, &["amend"]);
+
+    let amended = git(&dir, &["show", "-s", "--format=%aI", "HEAD"])
+        .trim()
+        .to_string();
+    assert!(
+        amended > parent,
+        "amend 后时间 ({amended}) 必须晚于父提交 ({parent})"
+    );
+}

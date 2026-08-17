@@ -90,7 +90,7 @@ fn show_time_range() -> Result<()> {
 }
 
 fn run_commit(args: &[String]) -> Result<()> {
-    let random_dt = generate_random_commit_time()?;
+    let random_dt = generate_random_commit_time("HEAD")?;
     let formatted = random_dt.to_rfc3339();
     eprintln!("正在使用随机时间 {formatted} 执行 git commit...");
 
@@ -109,10 +109,6 @@ fn run_commit(args: &[String]) -> Result<()> {
 }
 
 fn amend_commit_time(args: &[String]) -> Result<()> {
-    let random_dt = generate_random_commit_time()?;
-    let formatted = random_dt.to_rfc3339();
-    eprintln!("正在使用随机时间 {formatted} 修改最后一次 commit...");
-
     // 关键背景：git 在 `--amend` 时若没有 `--reset-author`，会原样保留 author
     // date， 完全忽略 GIT_AUTHOR_DATE 环境变量。因此必须加 `--reset-author`
     // 才能改写 author date。 但 `--reset-author` 会同时重置作者身份
@@ -120,6 +116,13 @@ fn amend_commit_time(args: &[String]) -> Result<()> {
     // 读出来，通过 GIT_AUTHOR_NAME/EMAIL 环境变量回填。
     let orig_name = capture_git(&["show", "-s", "--format=%an", "HEAD"])?.unwrap_or_default();
     let orig_email = capture_git(&["show", "-s", "--format=%ae", "HEAD"])?.unwrap_or_default();
+
+    // amend 会用新提交替换 HEAD，为保证时间仍单调递增，时间下界应取被替换
+    // 提交的父提交 HEAD^，而不是 HEAD 本身（HEAD 的旧时间无需作为下界）。
+    // 若 HEAD 是根提交（无父提交），HEAD^ 读取失败按无下界处理。
+    let random_dt = generate_random_commit_time("HEAD^")?;
+    let formatted = random_dt.to_rfc3339();
+    eprintln!("正在使用随机时间 {formatted} 修改最后一次 commit...");
 
     let status = Command::new("git")
         .arg("commit")
@@ -169,10 +172,10 @@ fn capture_git(args: &[&str]) -> Result<Option<String>> {
 
 // --- 时间生成 ---
 
-/// 获取 HEAD commit 的提交时间，返回 None 表示仓库无 commit 或不在仓库中
-fn get_head_commit_time() -> Result<Option<DateTime<Local>>> {
+/// 获取指定提交 (rev) 的提交时间，返回 None 表示仓库无 commit 或不在仓库中
+fn get_commit_time(rev: &str) -> Result<Option<DateTime<Local>>> {
     let output = Command::new("git")
-        .args(["show", "-s", "--format=%ct", "HEAD"])
+        .args(["show", "-s", "--format=%ct", rev])
         .output();
 
     let output = match output {
@@ -188,10 +191,10 @@ fn get_head_commit_time() -> Result<Option<DateTime<Local>>> {
     Ok(Local.timestamp_opt(ts, 0).single())
 }
 
-/// 生成随机 commit 时间（实际入口：从 git 读取配置与 HEAD 时间）
-fn generate_random_commit_time() -> Result<DateTime<Local>> {
+/// 生成随机 commit 时间（实际入口：从 git 读取配置与时间下界提交）
+fn generate_random_commit_time(lower_rev: &str) -> Result<DateTime<Local>> {
     let (start_time, end_time) = load_time_range()?;
-    let last_commit = get_head_commit_time()?;
+    let last_commit = get_commit_time(lower_rev)?;
     let now = Local::now();
     match last_commit {
         Some(lc) => eprintln!("last_commit_time: {lc:?}"),
