@@ -63,7 +63,11 @@ fn handle_set(args: &[String]) -> Result<()> {
         return Err("开始时间与结束时间不能相同".into());
     }
 
-    let scope = if global { "--global" } else { "--local" };
+    let scope = if global {
+        "--global"
+    } else {
+        "--local"
+    };
     for (key, val) in [(CONFIG_KEY_START, &rest[0]), (CONFIG_KEY_END, &rest[1])] {
         let status = Command::new("git")
             .args(["config", scope, key, val])
@@ -207,10 +211,8 @@ fn generate_random_commit_time(lower_rev: &str) -> Result<DateTime<Local>> {
 ///
 /// 规则：
 /// - 新 commit 时间必须严格晚于 `last_commit`（保证单调递增）。
-/// - 时间窗口由 (`start_time`, `end_time`) 定义，支持跨天 (`start >= end`
-///   表示次日的 end)。
-/// - 优先使用今天（或 `last_commit`
-///   当天，取较晚者）的窗口；窗口耗尽则顺延到次日。
+/// - 时间窗口由 (`start_time`, `end_time`) 定义，支持跨天 (`start >= end` 表示次日的 end)。
+/// - 优先使用今天（或 `last_commit` 当天，取较晚者）的窗口；窗口耗尽则顺延到次日。
 /// - 遇到 DST 间隙自动跳过该日。
 fn compute_random_time(
     start_time: NaiveTime,
