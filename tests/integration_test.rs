@@ -226,3 +226,62 @@ fn amend_date_is_strictly_after_parent() {
         "amend 后时间 ({amended}) 必须晚于父提交 ({parent})"
     );
 }
+
+/// 以固定日期时间创建一个提交 (date/hm 来自 seed 提交的本地日期与偏移)
+fn commit_at(dir: &TempDir, date: &str, offset: &str, hm: &str, msg: &str) {
+    let iso = format!("{date}T{hm}:00{offset}");
+    run(Command::new("git")
+        .args(["commit", "-qm", msg])
+        .env("GIT_AUTHOR_DATE", &iso)
+        .env("GIT_COMMITTER_DATE", &iso)
+        .current_dir(dir.path()));
+}
+
+/// 获取指定 rev 的 unix 提交时间戳
+fn ct(dir: &TempDir, rev: &str) -> i64 {
+    git(&dir, &["show", "-s", "--format=%ct", rev])
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn amend_on_merge_is_strictly_after_all_parents() {
+    let dir = fresh_repo();
+    tc(&dir, &["set", "--local", "09:00", "17:00"]);
+
+    // merge base (真实时间，不参与断言；用其日期与偏移构造后续固定时间)
+    fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+    git(&dir, &["add", "a.txt"]);
+    git(&dir, &["commit", "-qm", "base"]);
+    let seed = git(&dir, &["show", "-s", "--format=%cI", "HEAD"]);
+    let date = seed[..10].to_string();
+    let offset = seed[seed.len() - 6..].to_string();
+
+    // 第二父 16:59 晚于第一父 09:00：amend 下界必须取所有父提交的最大值
+    let base_branch = git(&dir, &["symbolic-ref", "--short", "HEAD"])
+        .trim()
+        .to_string();
+    git(&dir, &["checkout", "-qb", "feature"]);
+    fs::write(dir.path().join("f.txt"), "f\n").unwrap();
+    git(&dir, &["add", "f.txt"]);
+    commit_at(&dir, &date, &offset, "16:59", "F");
+
+    git(&dir, &["checkout", "-q", &base_branch]);
+    fs::write(dir.path().join("m.txt"), "m\n").unwrap();
+    git(&dir, &["add", "m.txt"]);
+    commit_at(&dir, &date, &offset, "09:01", "M");
+
+    git(&dir, &["merge", "-q", "--no-ff", "feature", "-m", "merge"]);
+    tc(&dir, &["amend"]);
+
+    let amended = ct(&dir, "HEAD");
+    assert!(
+        amended > ct(&dir, "HEAD^2"),
+        "amend 后 merge commit 时间必须晚于第二父 (较晚的父提交)"
+    );
+    assert!(
+        amended > ct(&dir, "HEAD^"),
+        "amend 后 merge commit 时间必须晚于第一父"
+    );
+}

@@ -94,7 +94,7 @@ fn show_time_range() -> Result<()> {
 }
 
 fn run_commit(args: &[String]) -> Result<()> {
-    let random_dt = generate_random_commit_time("HEAD")?;
+    let random_dt = generate_random_commit_time(get_commit_time("HEAD")?)?;
     let formatted = random_dt.to_rfc3339();
     eprintln!("正在使用随机时间 {formatted} 执行 git commit...");
 
@@ -122,9 +122,9 @@ fn amend_commit_time(args: &[String]) -> Result<()> {
     let orig_email = capture_git(&["show", "-s", "--format=%ae", "HEAD"])?.unwrap_or_default();
 
     // amend 会用新提交替换 HEAD，为保证时间仍单调递增，时间下界应取被替换
-    // 提交的父提交 HEAD^，而不是 HEAD 本身（HEAD 的旧时间无需作为下界）。
-    // 若 HEAD 是根提交（无父提交），HEAD^ 读取失败按无下界处理。
-    let random_dt = generate_random_commit_time("HEAD^")?;
+    // 提交全部父提交时间的最大值 (merge commit 有多个父提交)，而不是 HEAD
+    // 本身（HEAD 的旧时间无需作为下界）。若 HEAD 是根提交，则无下界。
+    let random_dt = generate_random_commit_time(max_parent_time()?)?;
     let formatted = random_dt.to_rfc3339();
     eprintln!("正在使用随机时间 {formatted} 修改最后一次 commit...");
 
@@ -195,16 +195,35 @@ fn get_commit_time(rev: &str) -> Result<Option<DateTime<Local>>> {
     Ok(Local.timestamp_opt(ts, 0).single())
 }
 
-/// 生成随机 commit 时间（实际入口：从 git 读取配置与时间下界提交）
-fn generate_random_commit_time(lower_rev: &str) -> Result<DateTime<Local>> {
+/// 获取 HEAD 全部父提交时间的最大值；HEAD 为根提交或读取失败时返回 None。
+/// amend 后的新 HEAD 须严格晚于所有父提交，故取最大值而非仅第一父 HEAD^。
+fn max_parent_time() -> Result<Option<DateTime<Local>>> {
+    // `rev-list --parents` 输出 "<commit> <parent1> <parent2> ..."，
+    // 根提交仅输出自身一个 hash
+    let Some(out) = capture_git(&["rev-list", "--parents", "-n", "1", "HEAD"])? else {
+        return Ok(None);
+    };
+    let mut max = None;
+    for parent in out.split(' ').skip(1) {
+        if let Some(t) = get_commit_time(parent)? {
+            max = Some(match max {
+                Some(m) if m >= t => m,
+                _ => t,
+            });
+        }
+    }
+    Ok(max)
+}
+
+/// 生成随机 commit 时间（实际入口：从 git 读取配置，时间下界由调用方给出）
+fn generate_random_commit_time(lower: Option<DateTime<Local>>) -> Result<DateTime<Local>> {
     let (start_time, end_time) = load_time_range()?;
-    let last_commit = get_commit_time(lower_rev)?;
     let now = Local::now();
-    match last_commit {
+    match lower {
         Some(lc) => eprintln!("last_commit_time: {lc:?}"),
         None => eprintln!("last_commit_time: <none, 首次提交>"),
     }
-    compute_random_time(start_time, end_time, last_commit, now)
+    compute_random_time(start_time, end_time, lower, now)
 }
 
 /// 核心纯函数：根据时间窗口、上次提交时间、当前时间，计算一个随机 commit 时间。
