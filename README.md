@@ -19,10 +19,17 @@ git tc -am "comment"
 
 # 使用随机时间修改最后一次提交。注意，是 amend 不是 --amend
 git tc amend
+
+# 批量改写区间内所有提交：在整个区间的时间跨度与时间窗口的交集内一次性随机取点，
+# 保证严格递增；区间后的提交会被原样重建 (仅父指针变化，时间不变)
+git tc amend HEAD~5..HEAD
+git tc amend abc123..HEAD
 ```
 
 ## 特性
 
 - 同时改写 author date 与 committer date
-- 保证单调递增：每次生成的时间严格晚于 HEAD 的时间
+- 保证单调递增：每次生成的时间严格晚于 HEAD 的时间；批量改写时整体落在
+  边界父提交与区间后首个提交之间，与前后历史保持单调
 - 配置走 git config：复用 git 的 system / global / local 三级配置
+- 批量改写会丢弃被改写提交的 GPG 签名 (时间变化后签名必然失效)
